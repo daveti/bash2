@@ -84,6 +84,17 @@
 #  include <opennt/opennt.h>
 #endif
 
+/* CPU affinity support
+ * Apparently, we need some defs to make it Linux ONLY!
+ * Ref: http://www.gnu.org/software/libc/manual/html_node/CPU-Affinity.html
+ * Jan 28, 2015
+ * daveti
+ */
+#define _GNU_SOURCE
+#include <stdlib.h>
+#include <string.h>
+#include <sched.h>
+
 #if !defined (HAVE_GETPW_DECLS)
 extern struct passwd *getpwuid ();
 #endif /* !HAVE_GETPW_DECLS */
@@ -213,6 +224,9 @@ static int no_profile;			/* Don't execute .profile */
 static int do_version;			/* Display interesting version info. */
 static int make_login_shell;		/* Make this shell be a `-bash' shell. */
 static int want_initial_help;		/* --help option */
+static int bash2_debug;			/* daveti: bash2 debug */
+static int set_cpu_affinity = -1;	/* daveti: set CPU affinity */
+cpu_set_t cpu_set;			/* daveti: CPU set for affinity */
 
 int debugging_mode = 0;		/* In debugging mode with --debugger */
 #if defined (READLINE)
@@ -265,6 +279,8 @@ static const struct {
 #if defined (WORDEXP_OPTION)
   { "wordexp", Int, &wordexp_only, (char **)0x0 },
 #endif
+/* daveti: CPU affinity */
+  { "cpu-affinity", Int, &set_cpu_affinity, (char **)0x0 },
   { (char *)0x0, Int, (int *)0x0, (char **)0x0 }
 };
 
@@ -329,6 +345,37 @@ static void shell_initialize __P((void));
 static void shell_reinitialize __P((void));
 
 static void show_shell_usage __P((FILE *, int));
+
+/* Bash2:
+ * Sub routines for Bash hacking
+ * Should follow the naming style: bash2_X()
+ * Jan 29, 2015
+ * daveti
+ */
+static void bash2_set_cpu_affinity(int core)
+{
+	int result;
+	int core_num;
+
+	/* Validate the core number */
+	core_num = sysconf(_SC_NPROCESSORS_ONLN);
+	if (core_num < 1) {
+		printf("Bash2: get core number failed with errno [%d]\n", core_num);
+		return;
+	}
+	if (core >= core_num) {
+		printf("Bash2: core index [%d] beyond the total number of cores [%d]\n",
+			core, core_num);
+		return;
+	}
+
+	/* Set the CPU affinity */
+	CPU_ZERO(&cpu_set);
+	CPU_SET(core, &cpu_set);
+	result = sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+	if (result == -1)
+		printf("Bash2: set CPU affinity failed with errno [%d]\n", errno);
+}
 
 #ifdef __CYGWIN__
 static void
@@ -471,6 +518,13 @@ main (argc, argv, env)
     {
       show_shell_version (1);
       exit (EXECUTION_SUCCESS);
+    }
+
+  /* daveti: support for CPU affinity setting */
+  if (set_cpu_affinity != -1)
+    { 
+      printf("Bash2: set CPU affinity to core [%d]\n", set_cpu_affinity);
+      bash2_set_cpu_affinity(set_cpu_affinity);
     }
 
   /* All done with full word options; do standard shell option parsing.*/
@@ -780,8 +834,23 @@ parse_long_options (argv, arg_start, arg_end)
 
       for (i = 0; long_args[i].name; i++)
 	{
+	  /* daveti: debug */
+	  if (bash2_debug) {
+		printf("daveti:\n"
+			"arg_string [%s]\n"
+			"arg_string+1 [%s]\n"
+			"long_args[%d].name [%s]\n"
+			"strlen [%d]\n",
+			arg_string, arg_string+1, i, long_args[i].name,
+			strlen(long_args[i].name));
+	  }
+
 	  if (STREQ (arg_string + 1, long_args[i].name))
 	    {
+	      /* daveti: debug */
+	      if (bash2_debug)
+		printf("daveti: into argument value parsing\n");
+
 	      if (long_args[i].type == Int)
 		*long_args[i].int_value = 1;
 	      else if (argv[++arg_index] == 0)
@@ -794,11 +863,31 @@ parse_long_options (argv, arg_start, arg_end)
 
 	      break;
 	    }
+
+	  /* daveti: special handling for cpu-affinity */
+	  if (!strncmp(arg_string+1, long_args[i].name, strlen(long_args[i].name))) {
+		if (bash2_debug) {
+			printf("daveti: got the cpu-affinity\n");
+			printf("daveti: core number string [%s], sizeof [%d]\n",
+				arg_string+1+strlen(long_args[i].name),
+				strlen(long_args[i].name));
+		}
+		/* Get the value */
+		*long_args[i].int_value = (int)strtoul(arg_string+strlen(long_args[i].name)+2, NULL, 10);
+		if (bash2_debug)
+			printf("daveti: got the core number [%d]\n", *long_args[i].int_value);
+		break;
+	  }
 	}
       if (long_args[i].name == 0)
 	{
 	  if (longarg)
 	    {
+	      /* daveti: debug */
+	      if (bash2_debug)
+	      	printf("daveti: long parsing failed, arg_index [%d], argv[%d]=[%s]\n",
+			arg_index, arg_index, argv[arg_index]);
+
 	      report_error (_("%s: invalid option"), argv[arg_index]);
 	      show_shell_usage (stderr, 0);
 	      exit (EX_BADUSAGE);

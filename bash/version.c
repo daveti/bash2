@@ -84,6 +84,8 @@ show_shell_version (extended)
      int extended;
 {
   printf (_("GNU bash, version %s (%s)\n"), shell_version_string (), MACHTYPE);
+  /* daveti: to distinguish the official Bash */
+  printf (_("daveti bash2 based on GNU bash, version %s (%s)\n"), shell_version_string (), MACHTYPE);
   if (extended)
     {
       printf ("%s\n", _(bash_copyright));

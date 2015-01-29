@@ -6,7 +6,9 @@ Official Bash: git clone git://git.sv.gnu.org/bash.git
 
 New features:
 
-TBD
+1. set CPU affinity support: --cpu-affinity (Jan 29, 2015, daveti)
+
+New test suite: bash2tests
 
 Jan 28, 2015
 
